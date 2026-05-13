@@ -255,6 +255,32 @@ async function savePageToFirestore() {
   await db.collection('contents').doc(currentId).set(PAGES[currentId]);
 }
 
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function syncBlocks() {
+  if (!currentId || !PAGES[currentId] || !editMode) return;
+  blocksEl.querySelectorAll('.block[data-idx]').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    const block = PAGES[currentId].blocks[idx];
+    if (!block) return;
+    const titleEl = el.querySelector('.block-title[contenteditable]');
+    if (titleEl) block.title = titleEl.innerText.trim();
+    if (block.type === 'list') {
+      block.items = Array.from(el.querySelectorAll('.item-text'))
+        .map(s => s.innerText.trim()).filter(Boolean);
+    } else {
+      const bodyEl = el.querySelector('.block-body[contenteditable]');
+      if (bodyEl) block.content = bodyEl.innerText.trim();
+    }
+  });
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 function showToast(msg, isError) {
   document.querySelector('.toast')?.remove();
@@ -373,24 +399,41 @@ function renderPage(id) {
 }
 
 function renderBlock(block, idx) {
-  const actions = editMode
-    ? `<div class="block-actions">
-         <button class="btn-block-edit" onclick="editBlock(${idx})">편집</button>
-         <button class="btn-block-del"  onclick="deleteBlock(${idx})">삭제</button>
-       </div>`
-    : '';
+  if (!editMode) {
+    const body = block.type === 'list'
+      ? `<ul>${(block.items || []).map(i => `<li>${i}</li>`).join('')}</ul>`
+      : (block.content || '');
+    return `
+      <div class="block block-${block.type}">
+        <div class="block-head"><div class="block-title">${block.title || ''}</div></div>
+        <div class="block-body">${body}</div>
+      </div>`;
+  }
 
-  const body = block.type === 'list'
-    ? `<ul>${(block.items || []).map(i => `<li>${i}</li>`).join('')}</ul>`
-    : (block.content || '');
+  const titleEl = `<div class="block-title" contenteditable="true">${escHtml(block.title || '')}</div>`;
+  const delBtn  = `<div class="block-actions"><button class="btn-block-del" onclick="deleteBlock(${idx})">삭제</button></div>`;
+
+  let bodyHtml;
+  if (block.type === 'list') {
+    const items = (block.items || []).map((item, i) => `
+      <li class="editable-item">
+        <span class="item-text" contenteditable="true">${escHtml(item)}</span>
+        <button class="btn-item-del" onclick="deleteListItem(${idx},${i})" tabindex="-1">×</button>
+      </li>`).join('');
+    bodyHtml = `<div class="block-body"><ul class="editable-list">
+        ${items}
+        <li class="add-item-row">
+          <button class="btn-item-add" onclick="addListItem(${idx})">＋ 항목 추가</button>
+        </li>
+      </ul></div>`;
+  } else {
+    bodyHtml = `<div class="block-body" contenteditable="true">${escHtml(block.content || '')}</div>`;
+  }
 
   return `
-    <div class="block block-${block.type}">
-      <div class="block-head">
-        <div class="block-title">${block.title || ''}</div>
-        ${actions}
-      </div>
-      <div class="block-body">${body}</div>
+    <div class="block block-${block.type}" data-idx="${idx}">
+      <div class="block-head">${titleEl}${delBtn}</div>
+      ${bodyHtml}
     </div>`;
 }
 
@@ -419,23 +462,24 @@ function exitEditMode() {
 }
 
 // ── Block operations ──────────────────────────────────────────────────────────
-function editBlock(idx) {
-  if (!currentId || !PAGES[currentId]) return;
-  const block = PAGES[currentId].blocks[idx];
-  if (block.type === 'list') {
-    const raw = prompt('항목 편집 (줄바꿈으로 구분)', (block.items || []).join('\n'));
-    if (raw === null) return;
-    block.items = raw.split('\n').map(s => s.trim()).filter(Boolean);
-  } else {
-    const content = prompt('내용 편집', block.content || '');
-    if (content === null) return;
-    block.content = content;
-  }
+function addListItem(idx) {
+  syncBlocks();
+  PAGES[currentId].blocks[idx].items.push('');
+  renderPage(currentId);
+  const blockEl = blocksEl.querySelector(`.block[data-idx="${idx}"]`);
+  const spans = blockEl?.querySelectorAll('.item-text');
+  spans?.[spans.length - 1]?.focus();
+}
+
+function deleteListItem(idx, itemIdx) {
+  syncBlocks();
+  PAGES[currentId].blocks[idx].items.splice(itemIdx, 1);
   renderPage(currentId);
 }
 
 async function deleteBlock(idx) {
   if (!currentId || !confirm('이 블록을 삭제하시겠습니까?')) return;
+  syncBlocks();
   PAGES[currentId].blocks.splice(idx, 1);
   renderPage(currentId);
   try {
@@ -448,28 +492,24 @@ async function deleteBlock(idx) {
 
 function addBlock(type) {
   if (!currentId) return;
-  const defaultTitles = {
-    text: '📝 내용', list: '📋 목록', warning: '⚠️ 주의사항', tip: '💡 팁', cost: '💰 비용',
+  syncBlocks();
+  const defaults = {
+    text:    { type: 'text',    title: '📝 내용',     content: '' },
+    list:    { type: 'list',    title: '📋 목록',     items: [''] },
+    warning: { type: 'warning', title: '⚠️ 주의사항', content: '' },
+    tip:     { type: 'tip',     title: '💡 팁',       content: '' },
+    cost:    { type: 'cost',    title: '💰 비용',      content: '' },
   };
-  const title = prompt('블록 제목', defaultTitles[type] || '블록');
-  if (title === null) return;
-
-  let block;
-  if (type === 'list') {
-    const raw = prompt('항목 입력 (줄바꿈으로 구분)', '');
-    if (raw === null) return;
-    block = { type: 'list', title, items: raw.split('\n').map(s => s.trim()).filter(Boolean) };
-  } else {
-    const content = prompt('내용 입력', '');
-    if (content === null) return;
-    block = { type, title, content };
-  }
-  PAGES[currentId].blocks.push(block);
+  PAGES[currentId].blocks.push({ ...defaults[type] });
   renderPage(currentId);
+  const allBlocks = blocksEl.querySelectorAll('.block[data-idx]');
+  const lastBlock = allBlocks[allBlocks.length - 1];
+  lastBlock?.querySelector('.block-title[contenteditable]')?.focus();
 }
 
 async function savePage() {
   if (!currentId || !PAGES[currentId]) return;
+  syncBlocks();
   saveBtnEl.disabled = true;
   saveBtnEl.textContent = '저장 중...';
   try {
@@ -565,6 +605,13 @@ document.addEventListener('click', e => {
 });
 
 // ── Event wiring ──────────────────────────────────────────────────────────────
+blocksEl.addEventListener('keydown', e => {
+  if (e.target.matches('.block-title[contenteditable]') && e.key === 'Enter') {
+    e.preventDefault();
+    e.target.closest('.block')?.querySelector('.block-body[contenteditable], .item-text')?.focus();
+  }
+});
+
 toggleBtn.addEventListener('click', () =>
   sidebarEl.classList.contains('open') ? closeSidebar() : openSidebar()
 );
