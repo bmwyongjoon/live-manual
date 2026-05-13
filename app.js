@@ -291,10 +291,122 @@ function showToast(msg, isError) {
   setTimeout(() => t.remove(), 3000);
 }
 
+// ── Tree editing ──────────────────────────────────────────────────────────────
+function newId() {
+  return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+}
+
+async function saveTree() {
+  await db.collection('categories').doc('main').set({ tree: TREE });
+}
+
+function collectLeafIds(node) {
+  if (!node.children) return [node.id];
+  return node.children.flatMap(c => collectLeafIds(c));
+}
+
+function removeFromTree(id, nodes = TREE) {
+  const idx = nodes.findIndex(n => n.id === id);
+  if (idx !== -1) { nodes.splice(idx, 1); return true; }
+  return nodes.some(n => n.children && removeFromTree(id, n.children));
+}
+
+async function treeAddCat() {
+  const name = prompt('대분류 이름을 입력하세요', '');
+  if (!name?.trim()) return;
+  TREE.push({ id: newId(), name: name.trim(), children: [] });
+  buildTree();
+  await saveTree();
+  showToast('대분류를 추가했습니다');
+}
+
+async function treeAddChild(parentNode) {
+  const name = prompt('항목 이름을 입력하세요', '');
+  if (!name?.trim()) return;
+  if (!parentNode.children) parentNode.children = [];
+  parentNode.children.push({ id: newId(), name: name.trim() });
+  buildTree();
+  buildPageMeta(TREE, []);
+  await saveTree();
+  showToast('항목을 추가했습니다');
+}
+
+async function treeRename(node) {
+  const name = prompt('새 이름을 입력하세요', node.name);
+  if (!name?.trim() || name.trim() === node.name) return;
+  node.name = name.trim();
+  buildTree();
+  buildPageMeta(TREE, []);
+  if (currentId) renderPage(currentId);
+  await saveTree();
+  showToast('이름을 변경했습니다');
+}
+
+async function treeDelete(node) {
+  const hasKids = node.children?.length;
+  const msg = hasKids
+    ? `"${node.name}" 및 모든 하위 항목을 삭제하시겠습니까?\n저장된 콘텐츠도 함께 삭제됩니다.`
+    : `"${node.name}"을(를) 삭제하시겠습니까?`;
+  if (!confirm(msg)) return;
+
+  const leafIds = collectLeafIds(node);
+  removeFromTree(node.id);
+  buildTree();
+  await saveTree();
+
+  if (leafIds.length) {
+    const batch = db.batch();
+    leafIds.forEach(id => {
+      batch.delete(db.collection('contents').doc(id));
+      delete PAGES[id];
+    });
+    await batch.commit();
+  }
+  if (leafIds.includes(currentId)) { currentId = null; showView('welcome'); }
+  showToast('삭제했습니다');
+}
+
+function makeTreeEditBtns({ onAdd, onRename, onDelete }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'tree-edit-btns';
+  wrap.addEventListener('click', e => e.stopPropagation());
+
+  if (onAdd) {
+    const b = document.createElement('button');
+    b.className = 'tree-btn';
+    b.title = '하위 추가';
+    b.textContent = '+';
+    b.addEventListener('click', onAdd);
+    wrap.appendChild(b);
+  }
+  const r = document.createElement('button');
+  r.className = 'tree-btn';
+  r.title = '이름 수정';
+  r.textContent = '✏';
+  r.addEventListener('click', onRename);
+  wrap.appendChild(r);
+
+  const d = document.createElement('button');
+  d.className = 'tree-btn tree-btn-del';
+  d.title = '삭제';
+  d.textContent = '✕';
+  d.addEventListener('click', onDelete);
+  wrap.appendChild(d);
+
+  return wrap;
+}
+
 // ── Tree builder ──────────────────────────────────────────────────────────────
 function buildTree() {
   treeEl.innerHTML = '';
   TREE.forEach(cat => treeEl.appendChild(makeCat(cat)));
+  if (editMode) {
+    const btn = document.createElement('button');
+    btn.className = 'tree-add-cat-btn';
+    btn.textContent = '+ 대분류 추가';
+    btn.addEventListener('click', treeAddCat);
+    treeEl.appendChild(btn);
+  }
 }
 
 function makeCat(cat) {
@@ -303,8 +415,24 @@ function makeCat(cat) {
 
   const hdr = document.createElement('div');
   hdr.className = 'tree-cat-header';
-  hdr.innerHTML = `<span>${cat.name}</span><span class="ch">▶</span>`;
-  hdr.addEventListener('click', () => div.classList.toggle('open'));
+
+  const nameEl = document.createElement('span');
+  nameEl.textContent = cat.name;
+  const chEl = document.createElement('span');
+  chEl.className = 'ch';
+  chEl.textContent = '▶';
+  hdr.appendChild(nameEl);
+  hdr.appendChild(chEl);
+  hdr.addEventListener('click', e => {
+    if (!e.target.closest('.tree-edit-btns')) div.classList.toggle('open');
+  });
+  if (editMode) {
+    hdr.appendChild(makeTreeEditBtns({
+      onAdd:    () => treeAddChild(cat),
+      onRename: () => treeRename(cat),
+      onDelete: () => treeDelete(cat),
+    }));
+  }
 
   const kids = document.createElement('div');
   kids.className = 'tree-cat-children';
@@ -321,8 +449,24 @@ function makeMid(mid) {
 
   const hdr = document.createElement('div');
   hdr.className = 'tree-mid-header';
-  hdr.innerHTML = `<span>${mid.name}</span><span class="ch">▶</span>`;
-  hdr.addEventListener('click', () => div.classList.toggle('open'));
+
+  const nameEl = document.createElement('span');
+  nameEl.textContent = mid.name;
+  const chEl = document.createElement('span');
+  chEl.className = 'ch';
+  chEl.textContent = '▶';
+  hdr.appendChild(nameEl);
+  hdr.appendChild(chEl);
+  hdr.addEventListener('click', e => {
+    if (!e.target.closest('.tree-edit-btns')) div.classList.toggle('open');
+  });
+  if (editMode) {
+    hdr.appendChild(makeTreeEditBtns({
+      onAdd:    () => treeAddChild(mid),
+      onRename: () => treeRename(mid),
+      onDelete: () => treeDelete(mid),
+    }));
+  }
 
   const kids = document.createElement('div');
   kids.className = 'tree-mid-children';
@@ -337,8 +481,22 @@ function makeLeaf(item) {
   const el = document.createElement('div');
   el.className = 'tree-leaf';
   el.dataset.id = item.id;
-  el.innerHTML = `<span class="leaf-dot"></span><span>${item.name}</span>`;
-  el.addEventListener('click', () => selectPage(item.id));
+
+  const dot = document.createElement('span');
+  dot.className = 'leaf-dot';
+  const nameEl = document.createElement('span');
+  nameEl.textContent = item.name;
+  el.appendChild(dot);
+  el.appendChild(nameEl);
+  el.addEventListener('click', e => {
+    if (!e.target.closest('.tree-edit-btns')) selectPage(item.id);
+  });
+  if (editMode) {
+    el.appendChild(makeTreeEditBtns({
+      onRename: () => treeRename(item),
+      onDelete: () => treeDelete(item),
+    }));
+  }
   return el;
 }
 
@@ -346,8 +504,22 @@ function makeDirectLeaf(item) {
   const el = document.createElement('div');
   el.className = 'tree-direct-leaf';
   el.dataset.id = item.id;
-  el.innerHTML = `<span class="leaf-dot"></span><span>${item.name}</span>`;
-  el.addEventListener('click', () => selectPage(item.id));
+
+  const dot = document.createElement('span');
+  dot.className = 'leaf-dot';
+  const nameEl = document.createElement('span');
+  nameEl.textContent = item.name;
+  el.appendChild(dot);
+  el.appendChild(nameEl);
+  el.addEventListener('click', e => {
+    if (!e.target.closest('.tree-edit-btns')) selectPage(item.id);
+  });
+  if (editMode) {
+    el.appendChild(makeTreeEditBtns({
+      onRename: () => treeRename(item),
+      onDelete: () => treeDelete(item),
+    }));
+  }
   return el;
 }
 
@@ -605,6 +777,10 @@ document.addEventListener('click', e => {
 });
 
 // ── Event wiring ──────────────────────────────────────────────────────────────
+// 검색창 autofill 차단: readonly 상태에서 포커스 시 편집 허용
+searchEl.addEventListener('focus', () => searchEl.removeAttribute('readonly'));
+searchEl.addEventListener('blur',  () => { if (!searchEl.value) searchEl.setAttribute('readonly', ''); });
+
 blocksEl.addEventListener('keydown', e => {
   if (e.target.matches('.block-title[contenteditable]') && e.key === 'Enter') {
     e.preventDefault();

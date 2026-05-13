@@ -199,6 +199,59 @@ input  { font-family: inherit; font-size: inherit; }
 /* ── Tree ── */
 .tree-cat { border-bottom: 1px solid rgba(255,255,255,.06); }
 
+/* Tree edit buttons (edit mode only) */
+.tree-edit-btns {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--tr);
+  flex-shrink: 0;
+}
+body.edit-mode .tree-cat-header:hover .tree-edit-btns,
+body.edit-mode .tree-mid-header:hover .tree-edit-btns,
+body.edit-mode .tree-leaf:hover .tree-edit-btns,
+body.edit-mode .tree-direct-leaf:hover .tree-edit-btns {
+  opacity: 1;
+  pointer-events: auto;
+}
+.tree-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: rgba(255,255,255,.55);
+  background: rgba(255,255,255,.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--tr), color var(--tr);
+  flex-shrink: 0;
+}
+.tree-btn:hover { background: rgba(255,255,255,.2); color: #fff; }
+.tree-btn-del:hover { background: rgba(220,38,38,.6); color: #fff; }
+
+/* 대분류 추가 버튼 */
+.tree-add-cat-btn {
+  width: 100%;
+  padding: 11px 16px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255,255,255,.35);
+  border-top: 1px solid rgba(255,255,255,.06);
+  transition: color var(--tr), background var(--tr);
+}
+.tree-add-cat-btn:hover {
+  color: rgba(255,255,255,.7);
+  background: rgba(255,255,255,.05);
+}
+
+/* edit mode: 편집 버튼을 위한 .ch 마진 재정의 */
+body.edit-mode .tree-cat-header .ch,
+body.edit-mode .tree-mid-header .ch { margin-left: 0; margin-right: 2px; }
+
 .tree-cat-header {
   display: flex;
   align-items: center;
