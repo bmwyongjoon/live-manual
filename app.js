@@ -621,6 +621,7 @@ function enterEditMode() {
   document.body.classList.add('edit-mode');
   editBarEl.classList.remove('hidden');
   lockBtn.textContent = '🔓';
+  buildTree();
   if (currentId) renderPage(currentId);
 }
 
@@ -630,6 +631,7 @@ function exitEditMode() {
   editBarEl.classList.add('hidden');
   lockBtn.textContent = '🔒';
   sessionStorage.removeItem('bps_auth');
+  buildTree();
   if (currentId) renderPage(currentId);
 }
 
