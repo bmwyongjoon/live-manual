@@ -648,6 +648,65 @@ body.edit-mode .block:hover .block-actions { display: flex; }
 .search-dd-title { font-size: 13px; font-weight: 600; color: var(--navy); }
 .search-dd-path  { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 
+/* ── Drag and drop ── */
+.block-drag-handle {
+  cursor: grab;
+  color: var(--text-3);
+  font-size: 18px;
+  padding: 0 6px 0 0;
+  flex-shrink: 0;
+  user-select: none;
+  line-height: 1;
+}
+.block-drag-handle:active { cursor: grabbing; }
+
+.block.block-dragging { opacity: .35; }
+.block.drag-over-top    { border-top:    3px solid var(--navy) !important; }
+.block.drag-over-bottom { border-bottom: 3px solid var(--navy) !important; }
+
+body.edit-mode .tree-cat-header,
+body.edit-mode .tree-mid-header { cursor: grab; }
+body.edit-mode .tree-cat-header:active,
+body.edit-mode .tree-mid-header:active { cursor: grabbing; }
+body.edit-mode .tree-leaf,
+body.edit-mode .tree-direct-leaf { cursor: grab; }
+body.edit-mode .tree-leaf:active,
+body.edit-mode .tree-direct-leaf:active { cursor: grabbing; }
+
+.tree-dragging { opacity: .35; }
+.tree-cat-header.drag-over-top,
+.tree-mid-header.drag-over-top,
+.tree-leaf.drag-over-top,
+.tree-direct-leaf.drag-over-top  { box-shadow: inset 0 2px 0 var(--accent); }
+.tree-cat-header.drag-over-bottom,
+.tree-mid-header.drag-over-bottom,
+.tree-leaf.drag-over-bottom,
+.tree-direct-leaf.drag-over-bottom { box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* ── Type picker modal ── */
+.type-picker {
+  display: flex;
+  gap: 10px;
+  margin: 4px 0 0;
+}
+.type-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 10px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  transition: border-color var(--tr), background var(--tr);
+  cursor: pointer;
+}
+.type-btn:hover { border-color: var(--navy); background: rgba(28,61,110,.06); }
+.type-icon  { font-size: 28px; }
+.type-label { font-size: 13px; font-weight: 700; color: var(--navy); }
+.type-desc  { font-size: 11px; color: var(--text-2); text-align: center; line-height: 1.4; }
+
 /* ── Utility ── */
 .hidden { display: none !important; }
 

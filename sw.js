@@ -1,4 +1,4 @@
-const CACHE = 'bps-manual-v3';
+const CACHE = 'bps-manual-v4';
 const STATIC = [
   './',
   './index.html',

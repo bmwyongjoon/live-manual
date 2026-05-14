@@ -193,8 +193,11 @@ const SEED_CONTENT = {
 // ── State ─────────────────────────────────────────────────────────────────────
 let TREE  = [];
 let PAGES = {};
-let currentId = null;
-let editMode  = false;
+let currentId        = null;
+let editMode         = false;
+let sidebarDrag      = null;   // { node, parentArr }
+let blockDragIdx     = null;
+let typePickerResolve = null;
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const sidebarEl = document.getElementById('sidebar');
@@ -211,7 +214,11 @@ const pwInput   = document.getElementById('pw-input');
 const pwConfirm = document.getElementById('pw-confirm');
 const pwCancel  = document.getElementById('pw-cancel');
 const pwError   = document.getElementById('pw-error');
-const searchEl  = document.getElementById('search');
+const searchEl       = document.getElementById('search');
+const typeModalEl    = document.getElementById('type-modal');
+const typeFolderBtn  = document.getElementById('type-folder');
+const typeContentBtn = document.getElementById('type-content');
+const typeCancelBtn  = document.getElementById('type-cancel');
 
 // ── Firestore helpers ─────────────────────────────────────────────────────────
 function buildPageMeta(nodes, ancestors) {
@@ -281,6 +288,26 @@ function syncBlocks() {
   });
 }
 
+// ── Drag helpers ──────────────────────────────────────────────────────────────
+function clearDragIndicators() {
+  document.querySelectorAll('.drag-over-top, .drag-over-bottom')
+    .forEach(el => el.classList.remove('drag-over-top', 'drag-over-bottom'));
+}
+
+// ── Type picker ───────────────────────────────────────────────────────────────
+function showTypePicker() {
+  return new Promise(resolve => {
+    typePickerResolve = resolve;
+    typeModalEl.classList.remove('hidden');
+  });
+}
+
+function closeTypePicker(result) {
+  typeModalEl.classList.add('hidden');
+  typePickerResolve?.(result);
+  typePickerResolve = null;
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 function showToast(msg, isError) {
   document.querySelector('.toast')?.remove();
@@ -320,15 +347,23 @@ async function treeAddCat() {
   showToast('대분류를 추가했습니다');
 }
 
-async function treeAddChild(parentNode) {
+async function treeAddChild(parentNode, allowFolder = false) {
+  let isFolder = false;
+  if (allowFolder) {
+    const type = await showTypePicker();
+    if (!type) return;
+    isFolder = type === 'folder';
+  }
   const name = prompt('항목 이름을 입력하세요', '');
   if (!name?.trim()) return;
+  const newNode = { id: newId(), name: name.trim() };
+  if (isFolder) newNode.children = [];
   if (!parentNode.children) parentNode.children = [];
-  parentNode.children.push({ id: newId(), name: name.trim() });
+  parentNode.children.push(newNode);
   buildTree();
   buildPageMeta(TREE, []);
   await saveTree();
-  showToast('항목을 추가했습니다');
+  showToast(isFolder ? '📁 폴더형 항목을 추가했습니다' : '📄 내용형 항목을 추가했습니다');
 }
 
 async function treeRename(node) {
@@ -366,11 +401,43 @@ async function treeDelete(node) {
   showToast('삭제했습니다');
 }
 
-function makeTreeEditBtns({ onAdd, onRename, onDelete }) {
+async function treeToggleType(node, parentArr) {
+  if (node.children !== undefined) {
+    // 폴더 → 내용형
+    if (node.children.length > 0) {
+      if (!confirm(`"${node.name}"를 내용형으로 변경하면 하위 항목이 모두 삭제됩니다. 계속하시겠습니까?`)) return;
+      const leafIds = node.children.flatMap(c => collectLeafIds(c));
+      if (leafIds.length) {
+        const batch = db.batch();
+        leafIds.forEach(id => { batch.delete(db.collection('contents').doc(id)); delete PAGES[id]; });
+        await batch.commit();
+      }
+    }
+    delete node.children;
+  } else {
+    // 내용형 → 폴더
+    node.children = [];
+  }
+  buildTree();
+  buildPageMeta(TREE, []);
+  await saveTree();
+  showToast('유형을 변경했습니다');
+}
+
+function makeTreeEditBtns({ onAdd, onRename, onDelete, onTypeToggle }) {
   const wrap = document.createElement('div');
   wrap.className = 'tree-edit-btns';
   wrap.addEventListener('click', e => e.stopPropagation());
+  wrap.addEventListener('dragstart', e => e.stopPropagation());
 
+  if (onTypeToggle) {
+    const t = document.createElement('button');
+    t.className = 'tree-btn';
+    t.title = '유형 변경 (폴더형↔내용형)';
+    t.textContent = '⇄';
+    t.addEventListener('click', onTypeToggle);
+    wrap.appendChild(t);
+  }
   if (onAdd) {
     const b = document.createElement('button');
     b.className = 'tree-btn';
@@ -409,6 +476,54 @@ function buildTree() {
   }
 }
 
+function addTreeDrag(el, node, parentArr) {
+  el.draggable = true;
+  el.addEventListener('dragstart', e => {
+    if (e.target.closest('.tree-edit-btns')) { e.preventDefault(); return; }
+    e.stopPropagation();
+    sidebarDrag = { node, parentArr };
+    el.classList.add('tree-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', node.id);
+  });
+  el.addEventListener('dragend', () => {
+    el.classList.remove('tree-dragging');
+    clearDragIndicators();
+    sidebarDrag = null;
+  });
+  el.addEventListener('dragover', e => {
+    if (!sidebarDrag || sidebarDrag.node.id === node.id || sidebarDrag.parentArr !== parentArr) return;
+    e.preventDefault();
+    e.stopPropagation();
+    clearDragIndicators();
+    const mid = el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2;
+    el.classList.add(e.clientY < mid ? 'drag-over-top' : 'drag-over-bottom');
+  });
+  el.addEventListener('dragleave', e => {
+    if (!e.relatedTarget || !el.contains(e.relatedTarget)) {
+      el.classList.remove('drag-over-top', 'drag-over-bottom');
+    }
+  });
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.remove('drag-over-top', 'drag-over-bottom');
+    if (!sidebarDrag || sidebarDrag.parentArr !== parentArr || sidebarDrag.node.id === node.id) return;
+    const arr = parentArr;
+    const fromIdx = arr.findIndex(n => n.id === sidebarDrag.node.id);
+    const toIdx   = arr.findIndex(n => n.id === node.id);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const mid = el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2;
+    let insertIdx = e.clientY < mid ? toIdx : toIdx + 1;
+    const [moved] = arr.splice(fromIdx, 1);
+    if (insertIdx > fromIdx) insertIdx--;
+    arr.splice(insertIdx, 0, moved);
+    buildTree();
+    buildPageMeta(TREE, []);
+    saveTree().then(() => showToast('순서를 변경했습니다')).catch(err => showToast('저장 실패: ' + err.message, true));
+  });
+}
+
 function makeCat(cat) {
   const div = document.createElement('div');
   div.className = 'tree-cat';
@@ -428,22 +543,25 @@ function makeCat(cat) {
   });
   if (editMode) {
     hdr.appendChild(makeTreeEditBtns({
-      onAdd:    () => treeAddChild(cat),
+      onAdd:    () => treeAddChild(cat, true),
       onRename: () => treeRename(cat),
       onDelete: () => treeDelete(cat),
     }));
+    addTreeDrag(hdr, cat, TREE);
   }
 
   const kids = document.createElement('div');
   kids.className = 'tree-cat-children';
-  cat.children.forEach(c => kids.appendChild(c.children ? makeMid(c) : makeDirectLeaf(c)));
+  cat.children.forEach(c => kids.appendChild(
+    c.children ? makeMid(c, cat.children) : makeDirectLeaf(c, cat.children)
+  ));
 
   div.appendChild(hdr);
   div.appendChild(kids);
   return div;
 }
 
-function makeMid(mid) {
+function makeMid(mid, parentArr) {
   const div = document.createElement('div');
   div.className = 'tree-mid';
 
@@ -462,22 +580,24 @@ function makeMid(mid) {
   });
   if (editMode) {
     hdr.appendChild(makeTreeEditBtns({
-      onAdd:    () => treeAddChild(mid),
-      onRename: () => treeRename(mid),
-      onDelete: () => treeDelete(mid),
+      onAdd:         () => treeAddChild(mid, false),
+      onRename:      () => treeRename(mid),
+      onDelete:      () => treeDelete(mid),
+      onTypeToggle:  () => treeToggleType(mid, parentArr),
     }));
+    addTreeDrag(hdr, mid, parentArr);
   }
 
   const kids = document.createElement('div');
   kids.className = 'tree-mid-children';
-  mid.children.forEach(c => kids.appendChild(makeLeaf(c)));
+  mid.children.forEach(c => kids.appendChild(makeLeaf(c, mid.children)));
 
   div.appendChild(hdr);
   div.appendChild(kids);
   return div;
 }
 
-function makeLeaf(item) {
+function makeLeaf(item, parentArr) {
   const el = document.createElement('div');
   el.className = 'tree-leaf';
   el.dataset.id = item.id;
@@ -496,11 +616,12 @@ function makeLeaf(item) {
       onRename: () => treeRename(item),
       onDelete: () => treeDelete(item),
     }));
+    addTreeDrag(el, item, parentArr);
   }
   return el;
 }
 
-function makeDirectLeaf(item) {
+function makeDirectLeaf(item, parentArr) {
   const el = document.createElement('div');
   el.className = 'tree-direct-leaf';
   el.dataset.id = item.id;
@@ -516,9 +637,11 @@ function makeDirectLeaf(item) {
   });
   if (editMode) {
     el.appendChild(makeTreeEditBtns({
-      onRename: () => treeRename(item),
-      onDelete: () => treeDelete(item),
+      onRename:     () => treeRename(item),
+      onDelete:     () => treeDelete(item),
+      onTypeToggle: () => treeToggleType(item, parentArr),
     }));
+    addTreeDrag(el, item, parentArr);
   }
   return el;
 }
@@ -582,6 +705,7 @@ function renderBlock(block, idx) {
       </div>`;
   }
 
+  const dragHandle = `<div class="block-drag-handle" data-drag-block="true" title="드래그하여 순서 변경">⠿</div>`;
   const titleEl = `<div class="block-title" contenteditable="true">${escHtml(block.title || '')}</div>`;
   const delBtn  = `<div class="block-actions"><button class="btn-block-del" onclick="deleteBlock(${idx})">삭제</button></div>`;
 
@@ -604,7 +728,7 @@ function renderBlock(block, idx) {
 
   return `
     <div class="block block-${block.type}" data-idx="${idx}">
-      <div class="block-head">${titleEl}${delBtn}</div>
+      <div class="block-head">${dragHandle}${titleEl}${delBtn}</div>
       ${bodyHtml}
     </div>`;
 }
@@ -697,6 +821,72 @@ async function savePage() {
   }
 }
 
+// ── Block drag and drop ───────────────────────────────────────────────────────
+function setupBlockDragListeners() {
+  blocksEl.addEventListener('dragstart', e => {
+    if (!editMode) return;
+    const handle = e.target.closest('[data-drag-block]');
+    if (!handle) return;
+    const blockEl = handle.closest('.block[data-idx]');
+    if (!blockEl) return;
+    syncBlocks();
+    blockDragIdx = parseInt(blockEl.dataset.idx);
+    blockEl.classList.add('block-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(blockDragIdx));
+  });
+
+  blocksEl.addEventListener('dragend', () => {
+    blocksEl.querySelectorAll('.block').forEach(b =>
+      b.classList.remove('block-dragging', 'drag-over-top', 'drag-over-bottom')
+    );
+    blockDragIdx = null;
+  });
+
+  blocksEl.addEventListener('dragover', e => {
+    if (blockDragIdx === null) return;
+    const targetBlock = e.target.closest('.block[data-idx]');
+    if (!targetBlock) return;
+    e.preventDefault();
+    blocksEl.querySelectorAll('.block').forEach(b =>
+      b.classList.remove('drag-over-top', 'drag-over-bottom')
+    );
+    const rect = targetBlock.getBoundingClientRect();
+    const mid  = rect.top + rect.height / 2;
+    targetBlock.classList.add(e.clientY < mid ? 'drag-over-top' : 'drag-over-bottom');
+    e.dataTransfer.dropEffect = 'move';
+  });
+
+  blocksEl.addEventListener('dragleave', e => {
+    const targetBlock = e.target.closest('.block[data-idx]');
+    if (targetBlock && !e.relatedTarget?.closest('.block[data-idx]')) {
+      targetBlock.classList.remove('drag-over-top', 'drag-over-bottom');
+    }
+  });
+
+  blocksEl.addEventListener('drop', e => {
+    e.preventDefault();
+    const targetBlock = e.target.closest('.block[data-idx]');
+    if (!targetBlock || blockDragIdx === null) return;
+    const targetIdx = parseInt(targetBlock.dataset.idx);
+    if (targetIdx === blockDragIdx) return;
+
+    const rect = targetBlock.getBoundingClientRect();
+    const mid  = rect.top + rect.height / 2;
+    let insertIdx = e.clientY < mid ? targetIdx : targetIdx + 1;
+
+    const blocks = PAGES[currentId].blocks;
+    const [moved] = blocks.splice(blockDragIdx, 1);
+    if (insertIdx > blockDragIdx) insertIdx--;
+    blocks.splice(insertIdx, 0, moved);
+
+    renderPage(currentId);
+    savePageToFirestore()
+      .then(() => showToast('순서를 변경했습니다'))
+      .catch(err => showToast('저장 실패: ' + err.message, true));
+  });
+}
+
 // ── Password modal ────────────────────────────────────────────────────────────
 function openModal() {
   pwInput.value = '';
@@ -779,6 +969,14 @@ document.addEventListener('click', e => {
 });
 
 // ── Event wiring ──────────────────────────────────────────────────────────────
+typeFolderBtn.addEventListener('click',  () => closeTypePicker('folder'));
+typeContentBtn.addEventListener('click', () => closeTypePicker('content'));
+typeCancelBtn.addEventListener('click',  () => closeTypePicker(null));
+typeModalEl.addEventListener('click', e => { if (e.target === typeModalEl) closeTypePicker(null); });
+
+// 블록 input 실시간 sync → 저장 버그 방지
+blocksEl.addEventListener('input', () => { if (editMode) syncBlocks(); });
+
 // 검색창 autofill 차단: readonly 상태에서 포커스 시 편집 허용
 searchEl.addEventListener('focus', () => searchEl.removeAttribute('readonly'));
 searchEl.addEventListener('blur',  () => { if (!searchEl.value) searchEl.setAttribute('readonly', ''); });
@@ -831,6 +1029,8 @@ modalEl.addEventListener('click', e => {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 async function initApp() {
+  setupBlockDragListeners();
+
   try {
     await loadData();
   } catch (e) {

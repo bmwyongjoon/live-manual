@@ -73,6 +73,28 @@
   </main>
 </div>
 
+<div id="type-modal" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <h2>항목 유형 선택</h2>
+    <p>추가할 항목의 유형을 선택하세요.</p>
+    <div class="type-picker">
+      <button id="type-folder" class="type-btn">
+        <span class="type-icon">📁</span>
+        <span class="type-label">폴더형</span>
+        <span class="type-desc">하위 항목을 가지는 드롭다운</span>
+      </button>
+      <button id="type-content" class="type-btn">
+        <span class="type-icon">📄</span>
+        <span class="type-label">내용형</span>
+        <span class="type-desc">직접 내용을 입력하는 항목</span>
+      </button>
+    </div>
+    <div class="modal-actions">
+      <button id="type-cancel" class="btn-secondary">취소</button>
+    </div>
+  </div>
+</div>
+
 <div id="modal" class="modal-backdrop hidden">
   <div class="modal-box">
     <h2>🔒 수정 모드 진입</h2>
