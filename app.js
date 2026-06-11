@@ -240,7 +240,7 @@ async function loadData() {
   const catDoc = await db.collection('categories').doc('main').get();
 
   if (catDoc.exists) {
-    TREE = catDoc.data().tree;
+    TREE = catDoc.data().tree || [];
   } else {
     TREE = DEFAULT_TREE;
     const batch = db.batch();
@@ -251,11 +251,22 @@ async function loadData() {
     await batch.commit();
   }
 
-  const snap = await db.collection('contents').get();
-  PAGES = {};
-  snap.forEach(doc => { PAGES[doc.id] = doc.data(); });
+  try {
+    const snap = await db.collection('contents').get();
+    PAGES = {};
+    snap.forEach(doc => {
+      const data = doc.data();
+      if (data) PAGES[doc.id] = data;
+    });
+    console.log(`[loadData] contents 로드: ${Object.keys(PAGES).length}건`, Object.keys(PAGES));
+  } catch (e) {
+    console.error('[loadData] contents 컬렉션 읽기 실패:', e);
+    PAGES = {};
+    showToast('페이지 내용을 불러오지 못했습니다. Firestore 보안 규칙을 확인하세요.', true);
+  }
 
   buildPageMeta(TREE, []);
+  console.log('[loadData] PAGES 최종 키:', Object.keys(PAGES));
 }
 
 async function savePageToFirestore() {
@@ -671,7 +682,14 @@ function selectPage(id) {
 
 function renderPage(id) {
   const page = PAGES[id];
-  if (!page) return;
+  if (!page) {
+    console.warn('[renderPage] PAGES에 없는 id:', id, '/ 현재 PAGES 키:', Object.keys(PAGES));
+    return;
+  }
+  if (!page.path) {
+    console.warn('[renderPage] path 없음 — buildPageMeta 미처리 id:', id);
+    return;
+  }
 
   document.getElementById('breadcrumb').innerHTML = page.path.map((seg, i) =>
     i < page.path.length - 1
@@ -1035,9 +1053,9 @@ async function initApp() {
     await loadData();
   } catch (e) {
     console.error('Firestore 로드 실패:', e);
-    TREE = DEFAULT_TREE;
+    if (!TREE.length) TREE = DEFAULT_TREE;
     buildPageMeta(TREE, []);
-    showToast('데이터 로드에 실패했습니다.', true);
+    showToast('데이터를 불러오지 못했습니다. 네트워크 또는 Firebase 설정을 확인하세요.', true);
   }
 
   buildTree();
