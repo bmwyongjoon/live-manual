@@ -281,6 +281,15 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// 링크 블록 URL 정규화. http(s)만 허용 (javascript: 등 차단), 스킴 없으면 https:// 보충
+function safeUrl(url) {
+  const u = (url || '').trim();
+  if (!u) return '';
+  if (/^https?:\/\//i.test(u)) return u;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(u)) return '';
+  return 'https://' + u;
+}
+
 function syncBlocks() {
   if (!currentId || !PAGES[currentId] || !editMode) return;
   blocksEl.querySelectorAll('.block[data-idx]').forEach(el => {
@@ -292,6 +301,9 @@ function syncBlocks() {
     if (block.type === 'list') {
       block.items = Array.from(el.querySelectorAll('.item-text'))
         .map(s => s.innerText.trim()).filter(Boolean);
+    } else if (block.type === 'link') {
+      block.label = el.querySelector('.link-label-input')?.value.trim() ?? '';
+      block.url   = el.querySelector('.link-url-input')?.value.trim() ?? '';
     } else {
       const bodyEl = el.querySelector('.block-body[contenteditable]');
       if (bodyEl) block.content = bodyEl.innerText.trim();
@@ -713,9 +725,18 @@ function renderPage(id) {
 
 function renderBlock(block, idx) {
   if (!editMode) {
-    const body = block.type === 'list'
-      ? `<ul>${(block.items || []).map(i => `<li>${i}</li>`).join('')}</ul>`
-      : (block.content || '');
+    let body;
+    if (block.type === 'list') {
+      body = `<ul>${(block.items || []).map(i => `<li>${i}</li>`).join('')}</ul>`;
+    } else if (block.type === 'link') {
+      const href = safeUrl(block.url);
+      const label = escHtml(block.label || block.url || '');
+      body = href
+        ? `<a class="link-anchor" href="${escHtml(href)}" target="_blank" rel="noopener noreferrer">${label}<span class="link-ext">↗</span></a>`
+        : `<span class="link-empty">${label || '링크 없음'}</span>`;
+    } else {
+      body = block.content || '';
+    }
     return `
       <div class="block block-${block.type}">
         <div class="block-head"><div class="block-title">${block.title || ''}</div></div>
@@ -740,6 +761,11 @@ function renderBlock(block, idx) {
           <button class="btn-item-add" onclick="addListItem(${idx})">＋ 항목 추가</button>
         </li>
       </ul></div>`;
+  } else if (block.type === 'link') {
+    bodyHtml = `<div class="block-body link-edit">
+        <label>제목<input type="text" class="link-label-input" placeholder="예: BPS 포털" value="${escHtml(block.label || '')}"></label>
+        <label>URL<input type="url" class="link-url-input" placeholder="https://..." value="${escHtml(block.url || '')}"></label>
+      </div>`;
   } else {
     bodyHtml = `<div class="block-body" contenteditable="true">${escHtml(block.content || '')}</div>`;
   }
@@ -815,12 +841,13 @@ function addBlock(type) {
     warning: { type: 'warning', title: '⚠️ 주의사항', content: '' },
     tip:     { type: 'tip',     title: '💡 팁',       content: '' },
     cost:    { type: 'cost',    title: '💰 비용',      content: '' },
+    link:    { type: 'link',    title: '🔗 링크',      label: '', url: '' },
   };
   PAGES[currentId].blocks.push({ ...defaults[type] });
   renderPage(currentId);
   const allBlocks = blocksEl.querySelectorAll('.block[data-idx]');
   const lastBlock = allBlocks[allBlocks.length - 1];
-  lastBlock?.querySelector('.block-title[contenteditable]')?.focus();
+  (lastBlock?.querySelector('.link-label-input') || lastBlock?.querySelector('.block-title[contenteditable]'))?.focus();
 }
 
 async function savePage() {
@@ -949,7 +976,7 @@ function doSearch() {
     const corpus = [
       page.title,
       ...page.path,
-      ...(page.blocks || []).flatMap(b => b.type === 'list' ? (b.items || []) : [b.content ?? '']),
+      ...(page.blocks || []).flatMap(b => b.type === 'list' ? (b.items || []) : b.type === 'link' ? [b.label ?? '', b.url ?? ''] : [b.content ?? '']),
     ].join(' ').toLowerCase();
     return corpus.includes(q);
   });

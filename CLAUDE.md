@@ -187,11 +187,15 @@ let typePickerResolve = null; // 타입 선택 모달 Promise resolve
 
 // list (items 배열 사용, content 없음)
 { type: 'list',    title: '📋 목록',     items: ['항목1', '항목2'] }
+
+// link (label + url, content 없음). 읽기 모드에서 새 탭으로 열림
+{ type: 'link',    title: '🔗 링크',     label: 'BPS 포털', url: 'https://...' }
 ```
 
 수정모드 렌더링:
 - `content` 타입들: `.block-body[contenteditable]` 하나.
 - `list` 타입: `<ul class="editable-list">` + `.item-text[contenteditable]` 반복.
+- `link` 타입: `.link-label-input`, `.link-url-input` 두 개의 `<input>`. 렌더 시 `safeUrl()`로 http(s)만 허용.
 - 모든 블록 헤더에 `⠿` 드래그 핸들(`data-drag-block="true"`) 포함.
 - `syncBlocks()` 는 `innerText`로 값을 읽어 PAGES 상태 갱신.
 
@@ -259,7 +263,7 @@ let typePickerResolve = null; // 타입 선택 모달 Promise resolve
 ## 서비스워커 (sw.js)
 
 ```js
-const CACHE = 'bps-manual-v4';  // ← 파일 수정 배포 시 이 버전을 올려야 캐시 갱신
+const CACHE = 'bps-manual-v6';  // ← 파일 수정 배포 시 이 버전을 올려야 캐시 갱신
 ```
 
 - `install`: skipWaiting → 즉시 활성화.
